@@ -12,7 +12,7 @@
  * Plugin Name:		jQuery Manager for WordPress
  * Plugin URI:		https://github.com/Remzi1993/wp-jquery-manager
  * Description:		Manage jQuery and jQuery Migrate on a WordPress website, select a specific jQuery and/or jQuery Migrate version. The ultimate jQuery debugging tool for WordPress. This plugin is a open source project, made possible by your contribution (code). Development is done on GitHub.
- * Version:			1.7.0
+ * Version:			1.8.0
  * Author:			Remzi Cavdar
  * Author URI:		https://twitter.com/remzicavdar
  * License:			GPLv3
@@ -47,10 +47,6 @@ define( 'WP_JQUERY_MANAGER_PLUGIN_JQUERY_1X', 'jquery-1.12.4' );
 define( 'WP_JQUERY_MANAGER_PLUGIN_JQUERY_MIGRATE_3X', 'jquery-migrate-3.0.1' );
 define( 'WP_JQUERY_MANAGER_PLUGIN_JQUERY_MIGRATE_1X', 'jquery-migrate-1.4.1' );
 
-// Settings
-$wp_jquery_manager_plugin_jquery_settings = (array) get_option( 'wp_jquery_manager_plugin_jquery_settings' );
-$wp_jquery_manager_plugin_jquery_migrate_settings = (array) get_option( 'wp_jquery_manager_plugin_jquery_migrate_settings' );
-
 // Plugin updater GitHub Repository
 require WP_JQUERY_MANAGER_PLUGIN_DIR_PATH . 'inc/plugin-update-checker/plugin-update-checker.php';
 $wp_jquery_manager_plugin_updater = Puc_v4_Factory::buildUpdateChecker(
@@ -62,32 +58,77 @@ $wp_jquery_manager_plugin_updater = Puc_v4_Factory::buildUpdateChecker(
 $wp_jquery_manager_plugin_updater->getVcsApi()->enableReleaseAssets();
 $wp_jquery_manager_plugin_updater->setBranch('master');
 
-// Activation / upgrade process
-require WP_JQUERY_MANAGER_PLUGIN_DIR_PATH . 'upgrade-process.php';
-
 // Include weDevs Settings API wrapper class
 require WP_JQUERY_MANAGER_PLUGIN_DIR_PATH . 'inc/settings-api.php';
 
-// Add settings link to our plugin section on the plugin list page
-function wp_jquery_manager_plugin_add_action_links ( $links ) {
-	$mylinks = array(
-		'<a href="' . WP_JQUERY_MANAGER_PLUGIN_ADMIN_URL . '">Settings</a>',
-	);
-
-	return array_merge( $links, $mylinks );
-}
-add_filter( 'plugin_action_links_' . plugin_basename(__FILE__), 'wp_jquery_manager_plugin_add_action_links' );
-
+register_activation_hook(   __FILE__, array( 'wp_jquery_manager_plugin', 'activation' ) );
+register_deactivation_hook( __FILE__, array( 'wp_jquery_manager_plugin', 'deactivation' ) );
 
 // Our plugin class
 if ( !class_exists( 'wp_jquery_manager_plugin' ) ) {
 
 	class wp_jquery_manager_plugin {
+
+        protected static $instance;
 		private $settings_api;
 		public $text_domain;
 		public $title;
 		public $capability;
 		public $slug;
+        public $jquery_options;
+        public $jquery_migrate_options;
+
+        public static function init() {
+            is_null( self::$instance ) AND self::$instance = new self;
+            return self::$instance;
+        }
+
+        // Activation process
+        public static function activation() {
+            if ( !current_user_can( 'activate_plugins' ) ) {
+                return;
+            }
+            $plugin = isset( $_REQUEST['plugin'] ) ? $_REQUEST['plugin'] : '';
+            check_admin_referer( "activate-plugin_{$plugin}" );
+
+            // Uncomment the following line to see the function in action
+            // exit( var_dump( $_GET ) );
+
+            // if (
+            //     !isset( $this->jquery_options['jquery_version'] ) &&
+            //     !isset( $this->jquery_migrate_options['jquery_migrate_version'] )
+            // ) {
+            //     return;
+            // }
+            // else {
+            //     $this->upgrade_process();
+            // }
+        }
+
+        // Check if the user has changed the settings,
+        // has old versions of jQuery and/or jQuery Migrate settings and han excute the upgrade process
+        public function upgrade_process() {
+            if (
+                !isset( $this->jquery_options['jquery_version'] ) &&
+                !isset( $this->jquery_migrate_options['jquery_migrate_version'] )
+            ) {
+                return;
+            }
+
+            // Upgrade process
+            require WP_JQUERY_MANAGER_PLUGIN_DIR_PATH . 'upgrade-process.php';
+        }
+
+        public static function deactivation() {
+            if ( !current_user_can( 'activate_plugins' ) ) {
+                return;
+            }
+            $plugin = isset( $_REQUEST['plugin'] ) ? $_REQUEST['plugin'] : '';
+            check_admin_referer( "deactivate-plugin_{$plugin}" );
+
+            // Uncomment the following line to see the function in action
+            // exit( var_dump( $_GET ) );
+        }
 
 	    public function __construct() {
 			// Using the weDevs WordPress Settings API wrapper class
@@ -101,9 +142,36 @@ if ( !class_exists( 'wp_jquery_manager_plugin' ) ) {
 			$this->capability = 'administrator';
 			$this->slug = WP_JQUERY_MANAGER_PLUGIN_SLUG;
 
+            // Set sections, fields and add plugin menu
 	        add_action( 'admin_init', array( $this, 'admin_init' ) );
 	        add_action( 'admin_menu', array( $this, 'admin_menu' ) );
+
+            // Settings (array)
+            $this->jquery_options = (array) get_option( 'wp_jquery_manager_plugin_jquery_settings' );
+            $this->jquery_migrate_options = (array) get_option( 'wp_jquery_manager_plugin_jquery_migrate_settings' );
+
+            // Register styles and scripts
+    		add_action( 'admin_enqueue_scripts', array( $this, 'register_admin_scripts' ) );
+            add_action( 'wp_enqueue_scripts', array( $this, 'register_front_end_scripts' ) );
+
+            // Add attribute to scripts
+            add_filter( 'script_loader_tag', array( $this, 'add_attribute', 10, 2 ) );
+
+            // Upgrade process for old settings
+            add_action( 'plugins_loaded', array( $this, 'upgrade_process' ) );
+
+            // Add settings link on plugins page
+            add_filter( 'plugin_action_links_' . plugin_basename(__FILE__), array( $this, 'add_action_links' ) );
 	    }
+
+        // Add settings link to our plugin section on the plugin list page
+        public function add_action_links ( $links ) {
+        	$mylinks = array(
+        		'<a href="' . WP_JQUERY_MANAGER_PLUGIN_ADMIN_URL . '">Settings</a>',
+        	);
+
+        	return array_merge( $links, $mylinks );
+        }
 
 	    public function admin_init() {
 	        // set the settings
@@ -248,11 +316,10 @@ if ( !class_exists( 'wp_jquery_manager_plugin' ) ) {
 	    }
 
 	    public function plugin_settings_page() {
-			$jquery_options = $GLOBALS['wp_jquery_manager_plugin_jquery_settings'];
 
 			// For debugging
-			if ( isset( $jquery_options['debug_mode'] ) ) {
-				if ( $jquery_options['debug_mode'] == 'on' ) {
+			if ( isset( $this->jquery_options['debug_mode'] ) ) {
+				if ( $this->jquery_options['debug_mode'] == 'on' ) {
 					echo '<h1>Debug information</h1>';
 					echo '<strong>Plugin directory:</strong> ' . WP_JQUERY_MANAGER_PLUGIN_DIR_PATH . '<br>';
 					echo '<strong>Plugin URL:</strong> ' . WP_JQUERY_MANAGER_PLUGIN_DIR_URL . '<br>';
@@ -287,204 +354,180 @@ if ( !class_exists( 'wp_jquery_manager_plugin' ) ) {
 	        return $pages_options;
 	    }
 
+        // Back end specific CSS
+        // Load only on tools.php?page=wp-jquery-manager-plugin-settings (plugin settings)
+        public function register_admin_scripts($hook) {
+            if( $hook != 'tools_page_' . WP_JQUERY_MANAGER_PLUGIN_SLUG ) {
+        		return;
+        	}
+
+        	wp_enqueue_style( 'wp-jquery-manager-plugin-admin', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . 'assets/css/admin.css', array(), null );
+        }
+
+        // Front-end not excuted in the wp admin and the wp customizer (for compatibility reasons)
+        // See: https://core.trac.wordpress.org/ticket/45130 and https://core.trac.wordpress.org/ticket/37110
+        public function register_front_end_scripts() {
+        	$wp_admin = is_admin();
+        	$wp_customizer = is_customize_preview();
+
+        	// jQuery
+        	if ( $wp_admin || $wp_customizer ) {
+        		// echo 'We are in the WP Admin or in the WP Customizer';
+        		return;
+        	}
+        	elseif ( !isset( $this->jquery_options['jquery'] ) ) { // Default setting
+        		// Deregister WP core jQuery, see https://github.com/Remzi1993/wp-jquery-manager/issues/2 and https://github.com/WordPress/WordPress/blob/91da29d9afaa664eb84e1261ebb916b18a362aa9/wp-includes/script-loader.php#L226
+        		wp_deregister_script( 'jquery' );
+        		wp_deregister_script( 'jquery-core' );
+
+        		// Default jQuery version
+        		$jquery_version = 'assets/js/' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_3X . '.min.js';
+
+        		// Register jQuery in the head
+        		wp_register_script( 'jquery-core', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_version, array(), null, false );
+
+        		/**
+        		 * Register jquery using jquery-core as a dependency, so other scripts could use the jquery handle
+        		 * see https://wordpress.stackexchange.com/questions/283828/wp-register-script-multiple-identifiers
+        		 * We first register the script and afther that we enqueue it, see why:
+        		 * https://wordpress.stackexchange.com/questions/82490/when-should-i-use-wp-register-script-with-wp-enqueue-script-vs-just-wp-enque
+        		 * https://stackoverflow.com/questions/39653993/what-is-diffrence-between-wp-enqueue-script-and-wp-register-script
+        		 */
+        		wp_register_script( 'jquery', false, array( 'jquery-core' ), null, false );
+        		wp_enqueue_script( 'jquery' );
+        	}
+        	elseif ( $this->jquery_options['jquery'] == 'on' ) {
+        		// Deregister WP core jQuery
+        		wp_deregister_script( 'jquery' );
+        		wp_deregister_script( 'jquery-core' );
+
+        		// Get jQuery version
+        		$jquery_version = 'assets/js/' . $this->jquery_options['jquery_version'];
+
+        		// Register jQuery in the head
+        		wp_register_script( 'jquery-core', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_version, array(), null, false );
+        		wp_register_script( 'jquery', false, array( 'jquery-core' ), null, false ); // Alias
+        		wp_enqueue_script( 'jquery' );
+        	}
+        	elseif ( $this->jquery_options['jquery'] == 'off' ) {
+        		// Deregister WP core jQuery
+        		wp_deregister_script( 'jquery' );
+        		wp_deregister_script( 'jquery-core' );
+
+        	} // End jQuery
+
+        	// jQuery Migrate
+        	if ( $wp_admin || $wp_customizer ) {
+        		// echo 'We are in the WP Admin or in the WP Customizer';
+        		return;
+        	}
+        	elseif ( !isset( $this->jquery_migrate_options['jquery_migrate'] ) ) { // Default setting
+        		// Deregister WP core jQuery Migrate
+        		wp_deregister_script( 'jquery-migrate' );
+
+        		// Default jQuery Migrate version
+        		$jquery_migrate_version = 'assets/js/' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_MIGRATE_3X . '.js';
+
+        		// Register and than enqueue jQuery Migrate in the head
+        		wp_register_script( 'jquery-migrate', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_migrate_version, array(), null, false );
+        		wp_enqueue_script( 'jquery-migrate' );
+        	}
+        	elseif ( $this->jquery_migrate_options['jquery_migrate'] == 'on' ) {
+        		// Deregister WP core jQuery Migrate
+        		wp_deregister_script( 'jquery-migrate' );
+
+        		// Get jQuery Migrate version
+        		$jquery_migrate_version = 'assets/js/' . $this->jquery_migrate_options['jquery_migrate_version'];
+
+        		// Setting head or body
+        		if ( $this->jquery_migrate_options['jquery_migrate_head_body'] == 'head' ) {
+        			// Enqueue jQuery Migrate in the head
+        			wp_register_script( 'jquery-migrate', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_migrate_version, array(), null, false );
+        			wp_enqueue_script( 'jquery-migrate' );
+        		}
+        		else {
+        			// Enqueue jQuery Migrate before </body>
+        			wp_register_script( 'jquery-migrate', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_migrate_version, array(), null, true );
+        			wp_enqueue_script( 'jquery-migrate' );
+        		}
+        	}
+        	elseif ( $this->jquery_migrate_options['jquery_migrate'] == 'off' ) {
+        		// Deregister WP core jQuery Migrate
+        		wp_deregister_script( 'jquery-migrate' );
+
+        	} // End jQuery Migrate
+
+
+            // When debugging is enabled
+            if ( $wp_admin || $wp_customizer ) {
+        		// echo 'We are in the WP Admin or in the WP Customizer';
+        		return;
+        	}
+            elseif ( isset( $this->jquery_options['debug_mode'] ) ) {
+
+                if ( $this->jquery_options['debug_mode'] == 'on' ) {
+                    $margin_j = "margin: 40px 0 0 20px;";
+                    $margin_jm = "margin: 140px 0 0 20px;";
+                    $style_j = "position: fixed; top: 0; left: 0; z-index: 9999; color: black; background: gray; " . $margin_j .  " padding: 20px; font-size: 30px;";
+                    $style_jm = "position: fixed; top: 0; left: 0; z-index: 9999; color: black; background: gray; " . $margin_jm .  " padding: 20px; font-size: 30px;";
+                    echo '<div style="'. $style_j .'">jQuery version: ' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_3X . '</div>';
+                }
+
+            }
+
+        } // End function wp_jquery_manager_plugin_front_end_scripts
+
+        // Defer and/or async jQuery and/or jQuery Migrate
+        public function add_attribute( $tag, $handle ) {
+        	if ( is_admin() || is_customize_preview() ) {
+        		return $tag;
+        	}
+        	elseif ( !isset( $this->jquery_options['jquery_execution'] ) && !isset( $this->jquery_migrate_options['jquery_migrate_execution'] ) ) { // No settings, default. Exit and stop wasting time :)
+        		return $tag;
+        	}
+
+        	if ( isset( $this->jquery_options['jquery_execution'] ) ) {
+        		switch ( $this->jquery_options['jquery_execution'] ) {
+        			case 'async':
+        				if ( 'jquery' === $handle ) {
+        					return str_replace( "src", "async src", $tag );
+        				}
+        				break;
+        			case 'defer':
+        				if ( 'jquery' === $handle ) {
+        					return str_replace( "src", "defer src", $tag );
+        				}
+        				break;
+        		}
+        	}
+
+        	if ( isset( $this->jquery_migrate_options['jquery_migrate_execution'] ) ) {
+        		switch ( $this->jquery_migrate_options['jquery_migrate_execution'] ) {
+        			case 'async':
+        				if ( 'jquery-migrate' === $handle ) {
+        					return str_replace( "src", "async src", $tag );
+        				}
+        				break;
+        			case 'defer':
+        				if ( 'jquery-migrate' === $handle ) {
+        					return str_replace( "src", "defer src", $tag );
+        				}
+        				break;
+        		}
+        	}
+
+        	return $tag;
+        }
+
+
 	} // End wp_jquery_manager_plugin class
 
 	new wp_jquery_manager_plugin();
 }
 
 
-// Front-end not excuted in the wp admin and the wp customizer (for compatibility reasons)
-// See: https://core.trac.wordpress.org/ticket/45130 and https://core.trac.wordpress.org/ticket/37110
-function wp_jquery_manager_plugin_front_end_scripts() {
-	$wp_admin = is_admin();
-	$wp_customizer = is_customize_preview();
-
-    $jquery_options = $GLOBALS['wp_jquery_manager_plugin_jquery_settings'];
-    $jquery_migrate_options = $GLOBALS['wp_jquery_manager_plugin_jquery_migrate_settings'];
-
-	$margin_j = "margin: 40px 0 0 20px;";
-	$margin_jm = "margin: 140px 0 0 20px;";
-	$style_j = "position: fixed; top: 0; left: 0; z-index: 9999; color: black; background: gray; " . $margin_j .  " padding: 20px; font-size: 30px;";
-	$style_jm = "position: fixed; top: 0; left: 0; z-index: 9999; color: black; background: gray; " . $margin_jm .  " padding: 20px; font-size: 30px;";
-
-	// jQuery
-	if ( $wp_admin || $wp_customizer ) {
-		// echo 'We are in the WP Admin or in the WP Customizer';
-		return;
-	}
-	elseif ( !isset( $jquery_options['jquery'] ) ) { // Default setting
-		// Deregister WP core jQuery, see https://github.com/Remzi1993/wp-jquery-manager/issues/2 and https://github.com/WordPress/WordPress/blob/91da29d9afaa664eb84e1261ebb916b18a362aa9/wp-includes/script-loader.php#L226
-		wp_deregister_script( 'jquery' );
-		wp_deregister_script( 'jquery-core' );
-
-		// Default jQuery version
-		$jquery_version = 'assets/js/' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_3X . '.min.js';
-
-		// Register jQuery in the head
-		wp_register_script( 'jquery-core', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_version, array(), null, false );
-
-		/**
-		 * Register jquery using jquery-core as a dependency, so other scripts could use the jquery handle
-		 * see https://wordpress.stackexchange.com/questions/283828/wp-register-script-multiple-identifiers
-		 * We first register the script and afther that we enqueue it, see why:
-		 * https://wordpress.stackexchange.com/questions/82490/when-should-i-use-wp-register-script-with-wp-enqueue-script-vs-just-wp-enque
-		 * https://stackoverflow.com/questions/39653993/what-is-diffrence-between-wp-enqueue-script-and-wp-register-script
-		 */
-		wp_register_script( 'jquery', false, array( 'jquery-core' ), null, false );
-		wp_enqueue_script( 'jquery' );
-
-		// When debugging is enabled
-		if ( isset( $jquery_options['debug_mode'] ) ) {
-			if ( $jquery_options['debug_mode'] == 'on' ) {
-				echo '<div style="'. $style_j .'">jQuery version: ' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_3X . '</div>';
-			}
-		}
-	}
-	elseif ( $jquery_options['jquery'] == 'on' ) {
-		// Deregister WP core jQuery
-		wp_deregister_script( 'jquery' );
-		wp_deregister_script( 'jquery-core' );
-
-		// Get jQuery version
-		$jquery_version = 'assets/js/' . $jquery_options['jquery_version'];
-
-		// Register jQuery in the head
-		wp_register_script( 'jquery-core', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_version, array(), null, false );
-		wp_register_script( 'jquery', false, array( 'jquery-core' ), null, false ); // Alias
-		wp_enqueue_script( 'jquery' );
-
-		// When debugging is enabled
-		if ( isset( $jquery_options['debug_mode'] ) ) {
-			if ( $jquery_options['debug_mode'] == 'on' ) {
-				echo '<div style="'. $style_j .'">jQuery version: ' . $jquery_options['jquery_version'] . '</div>';
-			}
-		}
-	}
-	elseif ( $jquery_options['jquery'] == 'off' ) {
-		// Deregister WP core jQuery
-		wp_deregister_script( 'jquery' );
-		wp_deregister_script( 'jquery-core' );
-
-	} // End jQuery
-
-	// jQuery Migrate
-	if ( $wp_admin || $wp_customizer ) {
-		// echo 'We are in the WP Admin or in the WP Customizer';
-		return;
-	}
-	elseif ( !isset( $jquery_migrate_options['jquery_migrate'] ) ) { // Default setting
-		// Deregister WP core jQuery Migrate
-		wp_deregister_script( 'jquery-migrate' );
-
-		// Default jQuery Migrate version
-		$jquery_migrate_version = 'assets/js/' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_MIGRATE_3X . '.js';
-
-		// Register and than enqueue jQuery Migrate in the head
-		wp_register_script( 'jquery-migrate', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_migrate_version, array(), null, false );
-		wp_enqueue_script( 'jquery-migrate' );
-
-		// When debugging is enabled
-		if ( isset( $jquery_options['debug_mode'] ) ) {
-			if ( $jquery_options['debug_mode'] == 'on' ) {
-				echo '<div style="'. $style_jm .'">jQuery Migrate version: ' . WP_JQUERY_MANAGER_PLUGIN_JQUERY_MIGRATE_3X . '</div>';
-			}
-		}
-	}
-	elseif ( $jquery_migrate_options['jquery_migrate'] == 'on' ) {
-		// Deregister WP core jQuery Migrate
-		wp_deregister_script( 'jquery-migrate' );
-
-		// Get jQuery Migrate version
-		$jquery_migrate_version = 'assets/js/' . $jquery_migrate_options['jquery_migrate_version'];
-
-		// Setting head or body
-		if ( $jquery_migrate_options['jquery_migrate_head_body'] == 'head' ) {
-			// Enqueue jQuery Migrate in the head
-			wp_register_script( 'jquery-migrate', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_migrate_version, array(), null, false );
-			wp_enqueue_script( 'jquery-migrate' );
-		}
-		else {
-			// Enqueue jQuery Migrate before </body>
-			wp_register_script( 'jquery-migrate', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . $jquery_migrate_version, array(), null, true );
-			wp_enqueue_script( 'jquery-migrate' );
-		}
-
-		// When debugging is enabled
-		if ( isset( $jquery_options['debug_mode'] ) ) {
-			if ( $jquery_options['debug_mode'] == 'on' ) {
-				echo '<div style="'. $style_jm .'">jQuery Migrate version: ' . $jquery_migrate_options['jquery_migrate_version'] . '</div>';
-			}
-		}
-	}
-	elseif ( $jquery_migrate_options['jquery_migrate'] == 'off' ) {
-		// Deregister WP core jQuery Migrate
-		wp_deregister_script( 'jquery-migrate' );
-
-	} // End jQuery Migrate
-
-} // End function wp_jquery_manager_plugin_front_end_scripts
 
 
-// Back end specific CSS
-// Load only on tools.php?page=wp-jquery-manager-plugin-settings (plugin settings)
-function wp_jquery_manager_plugin_admin_scripts($hook) {
-	if( $hook != 'tools_page_' . WP_JQUERY_MANAGER_PLUGIN_SLUG ) {
-		return;
-	}
-
-	wp_enqueue_style( 'wp-jquery-manager-plugin-admin', WP_JQUERY_MANAGER_PLUGIN_DIR_URL . 'assets/css/admin.css', array(), null );
-}
-
-// Register styles and scripts
-add_action( 'wp_enqueue_scripts', 'wp_jquery_manager_plugin_front_end_scripts' );
-add_action( 'admin_enqueue_scripts', 'wp_jquery_manager_plugin_admin_scripts' );
-
-
-// Defer and/or async jQuery and/or jQuery Migrate
-function wp_jquery_manager_plugin_add_attribute( $tag, $handle ) {
-	if ( is_admin() || is_customize_preview() ) {
-		return $tag;
-	}
-	elseif ( !isset( $jquery_options['jquery_execution'] ) && !isset( $jquery_migrate_options['jquery_migrate_execution'] ) ) { // No settings, default. Exit and stop wasting time :)
-		return $tag;
-	}
-
-    $jquery_options = $GLOBALS['wp_jquery_manager_plugin_jquery_settings'];
-    $jquery_migrate_options = $GLOBALS['wp_jquery_manager_plugin_jquery_migrate_settings'];
-
-	if ( isset( $jquery_options['jquery_execution'] ) ) {
-		switch ( $jquery_options['jquery_execution'] ) {
-			case 'async':
-				if ( 'jquery' === $handle ) {
-					return str_replace( "src", "async src", $tag );
-				}
-				break;
-			case 'defer':
-				if ( 'jquery' === $handle ) {
-					return str_replace( "src", "defer src", $tag );
-				}
-				break;
-		}
-	}
-
-	if ( isset( $jquery_migrate_options['jquery_migrate_execution'] ) ) {
-		switch ( $jquery_migrate_options['jquery_migrate_execution'] ) {
-			case 'async':
-				if ( 'jquery-migrate' === $handle ) {
-					return str_replace( "src", "async src", $tag );
-				}
-				break;
-			case 'defer':
-				if ( 'jquery-migrate' === $handle ) {
-					return str_replace( "src", "defer src", $tag );
-				}
-				break;
-		}
-	}
-
-	return $tag;
-}
-add_filter( 'script_loader_tag', 'wp_jquery_manager_plugin_add_attribute', 10, 2 );
 
 
 // Deactivation
